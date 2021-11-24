@@ -36,20 +36,49 @@ import matplotlib.pyplot as plt
 from AdaBins.infer import InferenceHelper
 import random
 import sys
-from dataset_utils import *
-class Dataset(data.Dataset):
+import os
+from AdaBins.infer import InferenceHelper
 
-    def __init__(self, mode, cate, length = 5000 ,b_len = 4, root = '/media/lang/My Passport/Dataset/Objectron/videos/'):
+from dataset_utils import *
+
+
+def generate_depth(cate, img_size = (480, 640), mode = 'test', root = '/media/lang/My Passport/Dataset/Objectron/videos/'):
+    print('>>', cate, mode)
+    infer_helper = InferenceHelper(dataset='nyu')
+    file_name_list = os.listdir(os.path.join(root, mode, cate))
+    video_names = []
+    for i in file_name_list:
+        if i[-1] == 'V' and len(i) != 4:
+            video_names.append(i)
+    for i in video_names:
+        print('->', i)
+        video = os.path.join(root, mode, cate, i)
+        capture = cv2.VideoCapture(video)
+        num_frames = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        capture.release()
+        frames = grab_frame(video, [i for i in range(int(num_frames))], img_size = img_size)
+        depth_dir = os.path.join(root, mode, cate, i.split('.')[0])
+        os.makedirs(depth_dir, exist_ok = True)
+        for ind, i in enumerate(frames):
+            _, predicted_depth = infer_helper.predict_pil(i)
+            predicted_depth = np.squeeze(predicted_depth, 0)
+            predicted_depth = np.transpose(predicted_depth, (1, 2, 0))
+            cv.imwrite(os.path.join(depth_dir, str(ind)+'.png'), predicted_depth)
+
+class Dataset(data.Dataset):
+    def __init__(self, mode, cate, img_size = (480, 640), length = 5000 ,b_len = 4, root = '/media/lang/My Passport/Dataset/Objectron/videos/'):
         self.mode = mode
         self.root = root
         self.cate = cate
         self.b_len = b_len
         self.video_names = []
+        self.img_size = img_size
         self.length = length
         file_name_list = os.listdir(os.path.join(self.root, mode, self.cate))
         for i in file_name_list:
             if i[-1] == 'V' and len(i) != 4:
                 self.video_names.append(i)
+
     def __len__(self):
         return self.length
     def __getitem__(self, index):
@@ -72,17 +101,19 @@ class Dataset(data.Dataset):
             to_frame_id = choose_frames[1]
             frame_ids = [from_frame_id, to_frame_id]
 
-            frames = grab_frame(os.path.join(os.path.join(self.root, self.mode, self.cate, choose_video)), frame_ids)
+            frames = grab_frame(os.path.join(os.path.join(self.root, self.mode, self.cate, choose_video)), frame_ids, img_size=self.img_size)
 
             b_frame_ids = [i for i in range(from_frame_id-self.b_len, from_frame_id)]
-            b_frames = grab_frame(os.path.join(os.path.join(self.root, self.mode, self.cate, choose_video)), b_frame_ids)
+            b_frames = grab_frame(os.path.join(os.path.join(self.root, self.mode, self.cate, choose_video)), b_frame_ids, img_size = self.img_size)
             if b_frames != -1 and frames != -1:
                 break
+
+
         for i in range(len(frame_ids)):
             frame_id = frame_ids[i]
             image = frames[i]
-            height, width, _ = image.shape # height: 1920, width = 1440
-
+            height, width, _ = image.shape # height: 1920, width = 1440 after resize 640, 480
+            print(height, width)
             points_2d, points_3d, num_keypoints, frame_view_matrix, frame_projection_matrix = annotation_data[frame_id]
             num_instances = len(num_keypoints)
             points_2d = np.split(points_2d, np.array(np.cumsum(num_keypoints)))
@@ -128,10 +159,17 @@ class Dataset(data.Dataset):
 
         return 0
 
-d = Dataset('train', 'laptop')
-dataloader = torch.utils.data.DataLoader(d, batch_size=1, shuffle=True, num_workers=0)
-for i, data in enumerate(dataloader, 0):
-    print(data)
+# d = Dataset('train', 'laptop')
+# dataloader = torch.utils.data.DataLoader(d, batch_size=1, shuffle=True, num_workers=0)
+# for i, data in enumerate(dataloader, 0):
+#     print(data)
+
+cates = ['laptop', 'shoe', 'cup', 'camera', 'bottle', 'book', 'chair', 'cereal_box', 'bike']
+for i in cates:
+    generate_depth(i)
+
+
+
 
 sys.exit()
 

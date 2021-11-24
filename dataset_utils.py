@@ -51,22 +51,27 @@ def project_points(points, projection_matrix, view_matrix, width, height):
     pixels[:, 1] = ((1 + y) * 0.5) * height
     pixels = pixels.astype(int)
     return pixels
-def grab_frame(video_file, frame_ids):
+def grab_frame(video_file, frame_ids, img_size):
   """Grab an image frame from the video file."""
   frames = []
   capture = cv2.VideoCapture(video_file)
   # width = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
   # height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+
   for i in frame_ids:
       capture.set(cv2.CAP_PROP_POS_FRAMES,i)
-
       if capture.isOpened():
           ret, frame = capture.read()
+
           if not ret:
               # print('Can\'t receive frame (stream end?). Exiting ...')
               capture.release()
               return -1
-          frames.append(frame)
+          # cv.imshow('frame',cv2.resize(frame,img_size))
+          if cv.waitKey(1) == ord('q'):
+              break
+
+          frames.append(cv2.resize(frame,img_size))
   capture.release()
   return frames
   # frame_size = width * height * 3
