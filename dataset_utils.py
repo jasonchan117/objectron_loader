@@ -51,45 +51,49 @@ def project_points(points, projection_matrix, view_matrix, width, height):
     pixels[:, 1] = ((1 + y) * 0.5) * height
     pixels = pixels.astype(int)
     return pixels
+def grab_frame_ffmeg(video_file, frame_ids, img_size):
+  """Grab an image frame from the video file."""
+  frames = []
+  capture = cv2.VideoCapture(video_file)
+  height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+  width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+  capture.release()
+  frame_size = width * height * 3
+
+  for frame_id in frame_ids:
+    frame_filter = r'select=\'eq(n\,{:d})\''.format(frame_id)
+    command = [
+        'ffmpeg', '-i', video_file, '-f', 'image2pipe', '-vf', frame_filter,
+        '-pix_fmt', 'rgb24', '-vcodec', 'rawvideo', '-vsync', 'vfr', '-', '-loglevel', 'error', '-hide_banner'
+    ]
+    pipe = subprocess.Popen(
+        command, stdout=subprocess.PIPE, bufsize = 151 * frame_size)
+    current_frame = np.frombuffer(
+        pipe.stdout.read(frame_size), dtype='uint8').reshape(width, height, 3)
+    pipe.stdout.flush()
+
+    frames.append(cv2.resize(current_frame, img_size))
+  return frames
 def grab_frame(video_file, frame_ids, img_size):
   """Grab an image frame from the video file."""
   frames = []
   capture = cv2.VideoCapture(video_file)
-  # width = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-  # height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-
+  # print(video_file)
+  # print(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+  # print(frame_ids)
   for i in frame_ids:
-      capture.set(cv2.CAP_PROP_POS_FRAMES,i)
-      if capture.isOpened():
-          ret, frame = capture.read()
+      while(True):
 
-          if not ret:
-              # print('Can\'t receive frame (stream end?). Exiting ...')
-              capture.release()
-              return -1
-          # cv.imshow('frame',cv2.resize(frame,img_size))
-          if cv.waitKey(1) == ord('q'):
+          capture.set(cv2.CAP_PROP_POS_FRAMES,i)
+          if capture.isOpened():
+              ret, frame = capture.read()
+              if not ret:
+                  continue
+              frames.append(cv2.resize(frame,img_size))
               break
-
-          frames.append(cv2.resize(frame,img_size))
   capture.release()
   return frames
-  # frame_size = width * height * 3
-  #
-  # for frame_id in frame_ids:
-  #   frame_filter = r'select=\'eq(n\,{:d})\''.format(frame_id)
-  #   command = [
-  #       'ffmpeg', '-i', video_file, '-f', 'image2pipe', '-vf', frame_filter,
-  #       '-pix_fmt', 'rgb24', '-vcodec', 'rawvideo', '-vsync', 'vfr', '-', '-loglevel', 'error', '-hide_banner'
-  #   ]
-  #   pipe = subprocess.Popen(
-  #       command, stdout=subprocess.PIPE, bufsize = 151 * frame_size)
-  #   current_frame = np.frombuffer(
-  #       pipe.stdout.read(frame_size), dtype='uint8').reshape(width, height, 3)
-  #   pipe.stdout.flush()
-  #
-  #   frames.append(current_frame)
-  # return frames
+
 def get_frame_annotation(annotation_filename):
     """Grab an annotated frame from the sequence."""
     result = []
