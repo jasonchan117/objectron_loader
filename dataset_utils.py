@@ -76,22 +76,24 @@ def grab_frame_ffmeg(video_file, frame_ids, img_size):
   return frames
 def grab_frame(video_file, frame_ids, img_size):
   """Grab an image frame from the video file."""
-  frames = []
-  capture = cv2.VideoCapture(video_file)
-  # print(video_file)
-  # print(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-  # print(frame_ids)
-  for i in frame_ids:
-      while(True):
-
+  while (True):
+      frames = []
+      capture = cv2.VideoCapture(video_file)
+      # print(video_file)
+      # print(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+      # print(frame_ids)
+      for i in frame_ids:
           capture.set(cv2.CAP_PROP_POS_FRAMES,i)
           if capture.isOpened():
               ret, frame = capture.read()
               if not ret:
-                  continue
-              frames.append(cv2.resize(frame,img_size))
-              break
-  capture.release()
+                  print('Error')
+                  break
+
+              frames.append(cv2.resize(frame, img_size))
+      capture.release()
+      if len(frames) == len(frame_ids):
+          break
   return frames
 
 def get_frame_annotation(annotation_filename):
@@ -140,7 +142,7 @@ def get_frame_annotation(annotation_filename):
                     object_keypoints_3d.append((keypoint.point_3d.x, keypoint.point_3d.y, keypoint.point_3d.z))
                 num_keypoints_per_object.append(num_keypoints)
                 object_id += 1
-            result.append((object_keypoints_2d, object_keypoints_3d, keypoint_size_list, view, projection))
+            result.append((object_keypoints_2d, object_keypoints_3d, keypoint_size_list, view, projection, intrinsics))
 
     return result, instances
 def get_geometry_data(geometry_filename):

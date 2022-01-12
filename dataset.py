@@ -78,6 +78,7 @@ class Dataset(data.Dataset):
         self.video_names = []
         self.img_size = img_size
         self.length = length
+        self.priori3d = priori3d
         # self.infer_helper = InferenceHelper(dataset='nyu', device='cpu')
 
         file_name_list = os.listdir(os.path.join(self.root, mode, self.cate))
@@ -128,11 +129,28 @@ class Dataset(data.Dataset):
 
     def __len__(self):
         return self.length
-    def get_2dBb(self, points_2d):
-        # Finding the 2d bounding box of the image
+    def get_2dBb(self, points_2d, img_size):
+        # Finding the 2d bounding box of the image shape: (9, 3)
         points_2d = np.array(points_2d)
+        ymax = max(points_2d[:, 0]) if max(points_2d[:, 0]) < img_size[0] else img_size[0] - 1
+        ymin = min(points_2d[:, 0]) if min(points_2d[:, 0]) >= 0 else 0
+        xmax = max(points_2d[:, 1]) if max(points_2d[:, 1]) < img_size[1] else img_size[1] - 1
+        xmin = min(points_2d[:, 1]) if min(points_2d[:, 1]) >= 0 else 0
+        return xmax, xmin, ymax, ymin
 
-        return
+    def get_point(self, xmax, xmin, ymax, ymin, intrinsic):
+        xmap = np.array([[j for i in range(640)] for j in range(480)])
+        ymap = np.array([[j for i in range(640)] for j in range(480)])
+
+        fx = intrinsic[0][0]
+        fy = intrinsic[1][1]
+        cx = intrinsic[0][2]
+        cy = intrinsic[1][2]
+
+
+
+
+
     def __getitem__(self, index):
         '''
 
@@ -177,12 +195,14 @@ class Dataset(data.Dataset):
         # The list that store all the transformation matrix for each single frame
         transform_mats = []
         points_2d_list = []
+        intrinsic_mats = []
         for i in range(len(self.frame_ids_list[index])):
 
             frame_id = self.frame_ids_list[index][i]
             image = frames[i]
             height, width, _ = image.shape # height: 1920, width = 1440 after resize 640, 480
-            points_2d, points_3d, num_keypoints, frame_view_matrix, frame_projection_matrix = annotation_data[frame_id]
+            points_2d, points_3d, num_keypoints, frame_view_matrix, frame_projection_matrix, intrinsic = annotation_data[frame_id]
+            intrinsic_mats.append(intrinsic)
             num_instances = len(num_keypoints)
             if num_instances > 1 and flag == 0:
                 choose_instance = random.sample([i for i in range(num_instances)], 1)[0]
@@ -231,18 +251,65 @@ class Dataset(data.Dataset):
             points2d[:, 1] = ((1 + y) * 0.5) * height
             points_2d_list.append(points2d.astype(int))
         # print(np.array(frames).shape, np.array(transform_mats).shape, np.array(frame_depth).shape, np.array(points_2d_list).shape)
+
+
+        xmax1, xmin1, ymax1, ymin1 = self.get_2dBb(np.array(points_2d_list[0]), self.img_size)
+        xmax2, xmin2, ymax2, ymin2 = self.get_2dBb(np.array(points_2d_list[1]), self.img_size)
+
         # Shapes: frame: (3, 640, 480), transformation matrix : (4, 4), depth: (640, 480), points_2d_list: (9, 3)
-        return (np.array(np.transpose(frames[0], (2, 1, 0)))/ 255.).astype(np.float32),(np.array(np.transpose(frames[1], (2, 1, 0)))/ 255.).astype(np.float32), np.array(transform_mats[0]).astype(np.float32),np.array(transform_mats[1]).astype(np.float32) , np.array(frame_depth[0]).astype(np.float32), np.array(frame_depth[1]).astype(np.float32), np.array(points_2d_list[0]).astype(np.float32), np.array(points_2d_list[1]).astype(np.float32)
+        frames[0], frames[1], transform_mats[0], transform_mats[1], frame_depth[0], frame_depth[1],points_2d_list[0], points_2d_list[1] =(np.array(np.transpose(frames[0], (2, 0, 1)))/ 255.).astype(np.float32),(np.array(np.transpose(frames[1], (2, 0, 1)))/ 255.).astype(np.float32), np.array(transform_mats[0]).astype(np.float32),np.array(transform_mats[1]).astype(np.float32) , np.array(frame_depth[0]).astype(np.float32), np.array(frame_depth[1]).astype(np.float32), np.array(points_2d_list[0]).astype(np.float32), np.array(points_2d_list[1]).astype(np.float32)
+        # cv2.imshow('img', np.array((np.transpose(frames[0], (1, 2, 0)) * 255)).astype(np.uint8))
+        # cv2.imshow('depth', np.array(frame_depth[0][:,:, np.newaxis]).astype(np.uint8))
+        frames[0], frames[1], frame_depth[0], frame_depth[1] = frames[0][:,xmin1:xmax1,ymin1:ymax1], frames[1][:,xmin2:xmax2, ymin2:ymax2], frame_depth[0][xmin1:xmax1,ymin1:ymax1], frame_depth[1][xmin2:xmax2, ymin2:ymax2]
+        # , points_2d_list[0], points_2d_list[1]
+        if self.priori3d == 'pointcloud':
+
+            self.xmap = np.array([[j for i in range(640)] for j in range(480)])
+            self.ymap = np.array([[i for i in range(640)] for j in range(480)])
+
+            fx1 = intrinsic_mats[0][0][0]
+            fx2 = intrinsic_mats[1][0][0]
+            fy1 = intrinsic_mats[0][1][1]
+            fy2 = intrinsic_mats[1][1][1]
+            cx1 = intrinsic_mats[0][0][2]
+            cx2 = intrinsic_mats[1][0][2]
+            cy1 = intrinsic_mats[0][1][2]
+            cy2 = intrinsic_mats[1][1][2]
+            choose1 = (frame_depth[0].flatten() > -1000.0).nonzero()[0]
+            choose2 = (frame_depth[1].flatten() > -1000.0).nonzero()[0]
+            depth_masked1 = frame_depth[0].flatten()[choose1][:, np.newaxis].astype(np.float32)  # The purpose of this step is to exclude the zero value in depth map.
+            depth_masked2 = frame_depth[1].flatten()[choose2][:, np.newaxis].astype(np.float32)
+
+            xmap_masked = self.xmap[xmin1:xmax1, ymin1:ymax1].flatten()[choose1][:, np.newaxis].astype(np.float32)
+            ymap_masked = self.ymap[xmin1:xmax1, ymin1:ymax1].flatten()[choose1][:, np.newaxis].astype(np.float32)
+
+            pt2_1 = depth_masked1
+            pt0_1 = (ymap_masked - cx1) * pt2_1 / fx1
+            pt1_1 = (xmap_masked - cy1) * pt2_1 / fy1
+
+            cloud = np.concatenate((-pt0_1, -pt1_1, pt2_1), axis = 1)
+            choose1 = np.array([choose1])
 
 
 
-d = Dataset(mode = 'train', cate = 'laptop', length= 5)
+
+
+
+        # cv2.imshow('img2', np.array((np.transpose(frames[0], (1, 2, 0)) * 255)).astype(np.uint8))
+        # cv2.imshow('depth2', np.array(frame_depth[0][:,:, np.newaxis]).astype(np.uint8))
+        return frames[0], frames[1],transform_mats[0], transform_mats[1], frame_depth[0], frame_depth[1]
+
+d = Dataset(mode = 'train', cate = 'book', length= 1)
 dataloader = torch.utils.data.DataLoader(d, batch_size=1, shuffle=True, num_workers=0)
 for i, data in enumerate(dataloader, 0):
 
-    frame1, frame2, mat1, mat2, depth1, depth2, point2d_1, point2d_2 = data
-    print(frame1.shape, mat1.shape, depth1.shape, depth2.shape, point2d_1.shape)
+    frame1, frame2, mat1, mat2, depth1, depth2 = data
+    # print(frame1.shape, mat1.shape, depth1.shape, depth2.shape, point2d_1.shape)
+    print(frame1.shape, frame2.shape, depth1.shape, depth2.shape)
 
+    # cv2.imshow('img', np.array((np.transpose(frame1[0], (1, 2, 0)) * 255)).astype(np.uint8))
+    # cv2.imshow('depth', np.array(np.transpose(depth1, (1, 2, 0))).astype(np.uint8))
+    # cv2.waitKey(0)
 
 
 # cates = ['laptop', 'shoe', 'cup', 'camera', 'bottle', 'book', 'chair', 'cereal_box', 'bike']
