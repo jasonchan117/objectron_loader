@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import cv2 as cv
 import torch
 import torch.utils.data as data
+from transformations import euler_matrix
 from PIL import Image
 import os
 from PIL import Image
@@ -138,16 +139,30 @@ class Dataset(data.Dataset):
         xmin = min(points_2d[:, 1]) if min(points_2d[:, 1]) >= 0 else 0
         return xmax, xmin, ymax, ymin
 
-    def get_point(self, xmax, xmin, ymax, ymin, intrinsic):
+    def get_point(self, xmax, xmin, ymax, ymin, intrinsic, depth, transform_mat):
         xmap = np.array([[j for i in range(640)] for j in range(480)])
         ymap = np.array([[j for i in range(640)] for j in range(480)])
-
+        choose = (depth.flatten() > -1000.0).nonzero()[0]
+        depth_masked = depth.flatten()[choose][:, np.newaxis].astype(np.float32)
+        xmap_masked = xmap[xmin:xmax, ymin:ymax].flatten()[choose][:, np.newaxis].astype(np.float32)
+        ymap_masked = ymap[xmin:xmax, ymin:ymax].flatten()[choose][:, np.newaxis].astype(np.float32)
         fx = intrinsic[0][0]
         fy = intrinsic[1][1]
         cx = intrinsic[0][2]
         cy = intrinsic[1][2]
-
-
+        cam_scale = 1.0
+        pt2 = depth_masked / cam_scale # 1.0
+        pt0 = (ymap_masked - cx) * pt2 / fx
+        pt1 = (xmap_masked - cy) * pt2 / fy
+        cloud = np.concatenate((-pt0, -pt1, pt2), axis=1)
+        delta = math.pi / 10.0
+        noise_trans = 0.05
+        r = euler_matrix(random.uniform(-delta, delta), random.uniform(-delta, delta), random.uniform(-delta, delta))[:3, :3]
+        t = np.array([random.uniform(-noise_trans, noise_trans) for i in range(3)]) * 1000.0
+        cloud = np.dot(cloud - target_t, target_r)
+        cloud = np.dot(cloud, r.T) + t
+        t = t / 1000.0
+        cloud = cloud / 1000.0
 
 
 
@@ -196,6 +211,7 @@ class Dataset(data.Dataset):
         transform_mats = []
         points_2d_list = []
         intrinsic_mats = []
+        points_3d_list = []
         for i in range(len(self.frame_ids_list[index])):
 
             frame_id = self.frame_ids_list[index][i]
@@ -237,6 +253,7 @@ class Dataset(data.Dataset):
             # If we transform these vertices to the camera frame, we get the 3D keypoints in the annotation data
             # i.e. vertices_3d_cam == points_3d
             vertices_3d_cam = np.matmul(frame_view_matrix, box_vertices_3d_world)
+            points_3d_list.append(np.transpose(np.array(vertices_3d_cam), (1, 0)))
             vertices_2d_proj = np.matmul(frame_projection_matrix, vertices_3d_cam)
             transform_mats.append(frame_view_matrix)
             # Project the points
@@ -251,8 +268,9 @@ class Dataset(data.Dataset):
             points2d[:, 1] = ((1 + y) * 0.5) * height
             points_2d_list.append(points2d.astype(int))
         # print(np.array(frames).shape, np.array(transform_mats).shape, np.array(frame_depth).shape, np.array(points_2d_list).shape)
-
-
+        points_3d_list = np.array(points_3d_list)
+        points_2d_list = np.array(points_2d_list)
+        print(points_3d_list.shape, points_2d_list.shape)
         xmax1, xmin1, ymax1, ymin1 = self.get_2dBb(np.array(points_2d_list[0]), self.img_size)
         xmax2, xmin2, ymax2, ymin2 = self.get_2dBb(np.array(points_2d_list[1]), self.img_size)
 
@@ -262,38 +280,6 @@ class Dataset(data.Dataset):
         # cv2.imshow('depth', np.array(frame_depth[0][:,:, np.newaxis]).astype(np.uint8))
         frames[0], frames[1], frame_depth[0], frame_depth[1] = frames[0][:,xmin1:xmax1,ymin1:ymax1], frames[1][:,xmin2:xmax2, ymin2:ymax2], frame_depth[0][xmin1:xmax1,ymin1:ymax1], frame_depth[1][xmin2:xmax2, ymin2:ymax2]
         # , points_2d_list[0], points_2d_list[1]
-        if self.priori3d == 'pointcloud':
-
-            self.xmap = np.array([[j for i in range(640)] for j in range(480)])
-            self.ymap = np.array([[i for i in range(640)] for j in range(480)])
-
-            fx1 = intrinsic_mats[0][0][0]
-            fx2 = intrinsic_mats[1][0][0]
-            fy1 = intrinsic_mats[0][1][1]
-            fy2 = intrinsic_mats[1][1][1]
-            cx1 = intrinsic_mats[0][0][2]
-            cx2 = intrinsic_mats[1][0][2]
-            cy1 = intrinsic_mats[0][1][2]
-            cy2 = intrinsic_mats[1][1][2]
-            choose1 = (frame_depth[0].flatten() > -1000.0).nonzero()[0]
-            choose2 = (frame_depth[1].flatten() > -1000.0).nonzero()[0]
-            depth_masked1 = frame_depth[0].flatten()[choose1][:, np.newaxis].astype(np.float32)  # The purpose of this step is to exclude the zero value in depth map.
-            depth_masked2 = frame_depth[1].flatten()[choose2][:, np.newaxis].astype(np.float32)
-
-            xmap_masked = self.xmap[xmin1:xmax1, ymin1:ymax1].flatten()[choose1][:, np.newaxis].astype(np.float32)
-            ymap_masked = self.ymap[xmin1:xmax1, ymin1:ymax1].flatten()[choose1][:, np.newaxis].astype(np.float32)
-
-            pt2_1 = depth_masked1
-            pt0_1 = (ymap_masked - cx1) * pt2_1 / fx1
-            pt1_1 = (xmap_masked - cy1) * pt2_1 / fy1
-
-            cloud = np.concatenate((-pt0_1, -pt1_1, pt2_1), axis = 1)
-            choose1 = np.array([choose1])
-
-
-
-
-
 
         # cv2.imshow('img2', np.array((np.transpose(frames[0], (1, 2, 0)) * 255)).astype(np.uint8))
         # cv2.imshow('depth2', np.array(frame_depth[0][:,:, np.newaxis]).astype(np.uint8))
@@ -306,7 +292,7 @@ for i, data in enumerate(dataloader, 0):
     frame1, frame2, mat1, mat2, depth1, depth2 = data
     # print(frame1.shape, mat1.shape, depth1.shape, depth2.shape, point2d_1.shape)
     print(frame1.shape, frame2.shape, depth1.shape, depth2.shape)
-
+    # print(mat1, mat2)
     # cv2.imshow('img', np.array((np.transpose(frame1[0], (1, 2, 0)) * 255)).astype(np.uint8))
     # cv2.imshow('depth', np.array(np.transpose(depth1, (1, 2, 0))).astype(np.uint8))
     # cv2.waitKey(0)
